@@ -1,0 +1,40 @@
+cs6238@secure-shared-store:~/Desktop/Project2/2FA$ ./token_generator
+Enter '1' for registring new User or '2' for generating token for existing user or '3' for deleting user acount: 1
+Enter the new user id:user1
+Enter PIN for the account:1234
+bk.SYkiSdoyR6jxLglzji.
+Enter 'Y' or 'y' whether task completed successfully: y
+User: user1 created
+cs6238@secure-shared-store:~/Desktop/Project2/2FA$ ./token_generator
+Enter '1' for registring new User or '2' for generating token for existing user or '3' for deleting user acount: 2
+Enter the user id:user1
+Enter PIN for the user1 :1234
+('bk.SYkiSdoyR6jxLglzji.', 'ff7B4Ow4.ITNTU3QVthyx0')
+Enter 'Y' or 'y' whether task completed successfully: y
+cs6238@secure-shared-store:~/Desktop/Project2/2FA$ ./token_generator
+Enter '1' for registring new User or '2' for generating token for existing user or '3' for deleting user acount: 2
+Enter the user id:user1
+Enter PIN for the user1 :1234
+('ff7B4Ow4.ITNTU3QVthyx0', 'j0RL8Or7FMvPBj2nEuCA60')
+Enter 'Y' or 'y' whether task completed successfully: y
+cs6238@secure-shared-store:~/Desktop/Project2/2FA$ ./token_generator
+Enter '1' for registring new User or '2' for generating token for existing user or '3' for deleting user acount: 1
+Enter the new user id:user2
+Enter PIN for the account:1234
+blQsFZwWaFSLkpZC8Cpjh1
+Enter 'Y' or 'y' whether task completed successfully: y
+User: user2 created
+cs6238@secure-shared-store:~/Desktop/Project2/2FA$ ./token_generator
+Enter '1' for registring new User or '2' for generating token for existing user or '3' for deleting user acount: 2
+Enter the user id:user2
+Enter PIN for the user2 :1234
+('blQsFZwWaFSLkpZC8Cpjh1', 'PPjr7jO12Ur/z9T381ubf/')
+Enter 'Y' or 'y' whether task completed successfully: y
+cs6238@secure-shared-store:~/Desktop/Project2/2FA$ ./token_generator
+Enter '1' for registring new User or '2' for generating token for existing user or '3' for deleting user acount: 2
+Enter the user id:user2
+Enter PIN for the user2 :1234
+('PPjr7jO12Ur/z9T381ubf/', 'R/F2tE.RVmSirL6wMNp5Y1')
+Enter 'Y' or 'y' whether task completed successfully: n
+Sorry to hear. Retry it.
+cs6238@secure-shared-store:~/Desktop/Project2/2FA$
