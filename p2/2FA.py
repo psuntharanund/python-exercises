@@ -1,9 +1,58 @@
+from passlib.hash import sha512_crypt
+
+SHADOW_FILE = "./app/shadow"
+PASSWD_FILE = "./app/passwd"
+
+def user_exists(username):
+    with open(SHADOW_FILE, 'r') as file:
+        for line in file:
+            if line.startswith(username + ":"):
+                return True 
+    with open(PASSWD_FILE, 'r') as file:
+        for line in file:
+            if  line.startswith(username + ":"):
+                return True
+    return False
+
+def update_shadow_file(username, hpassword):
+    shadow_line = f"{username}:{hpassword}:19446:0:99999:7:::"
+    with open(SHADOW_FILE, 'a+') as shadow_file:
+        shadow_file.write(shadow_line + '\n')
+
+def update_passwd_file(username):
+    count = 10
+
+    with open(PASSWD_FILE, 'r') as f:
+        for line in f:
+            temp1 = line.split(':')
+            while count <= int(temp1[3]) < 65534:
+                count = int(temp1[3]) + 1 
+        count = str(count)
+
+    passwd_line = f"{username}:x:{count}:{count}:{username}:/home/{username}:/bin/bash"
+    with open(PASSWD_FILE, 'a+') as passwd_file:
+        passwd_file.write(passwd_line + '\n')
+
 def create_user():
     username = input("Username: ")
     password = input("Password: ")
     rpassword = input("Confirm Password: ")
     salt = input("Salt: ")
     it = input("Initial Token: ")
+    hpassword = sha512_crypt.hash(password + it, salt = salt, rounds = 5000)
+
+    if password != rpassword:
+        print("FAILURE: incorrect password")
+        return 
+
+    if user_exists(username):
+        print(f"FAILURE: user {username} already exists")
+        return
+    else:
+        update_passwd_file(username)
+        update_shadow_file(username, hpassword)
+        print(f"SUCCESS: {username} created")
+
 
 def login():
     username = input("Username: ")
@@ -38,11 +87,11 @@ def main():
 
             if choice == 1:
                 create_user()
-            if choice == 2:
+            elif choice == 2:
                 login()
-            if choice == 3:
+            elif choice == 3:
                 update_pw()
-            if choice == 4:
+            elif choice == 4:
                 delete_user()
             else:
                 print("Please choose a number between 1 and 4.")
