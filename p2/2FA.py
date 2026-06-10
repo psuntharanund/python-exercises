@@ -14,10 +14,37 @@ def user_exists(username):
                 return True
     return False
 
+def authenticate(username, password, token):
+    with open('./app/shadow', 'r') as file:
+        for line in file:
+            temp = line.split(':')
+            if temp[0] == username:
+                stored_hash = temp[1]
+                hpassword = password + token 
+                return sha512_crypt.verify(hpassword, stored_hash);
+    return False
+
 def update_shadow_file(username, hpassword):
     shadow_line = f"{username}:{hpassword}:19446:0:99999:7:::"
     with open(SHADOW_FILE, 'a+') as shadow_file:
         shadow_file.write(shadow_line + '\n')
+
+def update_shadow_password(username, npassword, nsalt, nt):
+    new_hash = sha512_crypt.hash(npassword + nt, salt = nsalt, rounds = 5000)
+
+    lines = []
+    
+    with open(SHADOW_FILE, 'r') as file:
+        for line in file:
+            fields = line.split(':')
+            fields[1] = new_hash
+            line = ":".join(fields)
+            
+            lines.append(line)
+
+    with open(SHADOW_FILE, "w") as file:
+        for line in lines:
+            file.write(line + "\n")
 
 def update_passwd_file(username):
     count = 10
@@ -58,7 +85,15 @@ def login():
     username = input("Username: ")
     password = input("Password: ")
     ct = input("Current Token: ")
-    nt = input("Next Token ")
+    nt = input("Next Token: ")
+
+    if not user_exists(username):
+        print(f"FAILURE: user {username} does not exist")
+
+    if authenticate(username, password, ct):
+        print(f"SUCCESS: Login Successful")
+    else:
+        print(f"FAILURE:  either passwd or token incorrect")
 
 def update_pw():
     username = input("Username: ")
@@ -68,6 +103,19 @@ def update_pw():
     nsalt = input("New Salt: ")
     ct = input("Current Token: ")
     nt = input("Next Token: ")
+
+    if not user_exists(username):
+        print(f"FAILURE: user {username} does not exist")
+
+    if not authenticate(username, password, ct):
+        print(f"FAILURE: either passwd or token incorrect")
+
+    if npassword != rnpassword:
+        print(f"New passwords do not match.")
+        return
+    
+    update_shadow_password(username, npassword, nsalt, nt);
+    print(f"SUCCESS: user {username} updated")
 
 def delete_user():
     username = input("Username: ")
