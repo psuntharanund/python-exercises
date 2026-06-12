@@ -1,4 +1,5 @@
 from passlib.hash import sha512_crypt
+import shutil
 
 SHADOW_FILE = "./app/shadow"
 PASSWD_FILE = "./app/passwd"
@@ -24,6 +25,13 @@ def authenticate(username, password, token):
                 return sha512_crypt.verify(hpassword, stored_hash);
     return False
 
+def get_user_salt(username):
+    with open(SHADOW_FILE, 'r') as file:
+        for line in file:
+            fields = line.strip().split("l")
+            if fields[0] == username:
+                return fields[1].split("$")[2]
+
 def update_shadow_file(username, hpassword):
     shadow_line = f"{username}:{hpassword}:19446:0:99999:7:::"
     with open(SHADOW_FILE, 'a+') as shadow_file:
@@ -37,7 +45,8 @@ def update_shadow_password(username, npassword, nsalt, nt):
     with open(SHADOW_FILE, 'r') as file:
         for line in file:
             fields = line.split(':')
-            fields[1] = new_hash
+            if fields[0] == username:
+                fields[1] = new_hash
             line = ":".join(fields)
             
             lines.append(line)
@@ -60,6 +69,35 @@ def update_passwd_file(username):
     with open(PASSWD_FILE, 'a+') as passwd_file:
         passwd_file.write(passwd_line + '\n')
 
+def remove_from_passwd(username):
+    lines = []
+
+    with open(PASSWD_FILE, 'r') as file:
+        for line in file:
+            if not line.startswith(username + ":"):
+                lines.append(line)
+
+    with open(PASSWD_FILE, 'w') as file:
+        file.writelines(lines)
+
+
+def remove_from_shadow(username):
+    lines = []
+
+    with open(SHADOW_FILE, 'r') as file:
+        for line in file:
+            if not line.startswith(username + ":"):
+                lines.append(line)
+
+    with open(SHADOW_FILE, 'w') as file:
+        file.writelines(lines)
+
+def remove_home_directory(username):
+    home_dir = f"./home/{username}"
+
+    shutil.rmtree(home_dir, ignore_errors = True)
+
+
 def create_user():
     username = input("Username: ")
     password = input("Password: ")
@@ -75,6 +113,7 @@ def create_user():
     if user_exists(username):
         print(f"FAILURE: user {username} already exists")
         return
+
     else:
         update_passwd_file(username)
         update_shadow_file(username, hpassword)
@@ -89,11 +128,16 @@ def login():
 
     if not user_exists(username):
         print(f"FAILURE: user {username} does not exist")
+        return
 
     if authenticate(username, password, ct):
+        salt = get_user_salt(username);
+        update_shadow_password(username, password, salt, nt)
         print(f"SUCCESS: Login Successful")
+
     else:
         print(f"FAILURE:  either passwd or token incorrect")
+        return
 
 def update_pw():
     username = input("Username: ")
@@ -106,9 +150,11 @@ def update_pw():
 
     if not user_exists(username):
         print(f"FAILURE: user {username} does not exist")
+        return
 
     if not authenticate(username, password, ct):
         print(f"FAILURE: either passwd or token incorrect")
+        return
 
     if npassword != rnpassword:
         print(f"New passwords do not match.")
@@ -121,6 +167,21 @@ def delete_user():
     username = input("Username: ")
     password = input("Password: ")
     ct = input("Current Token: ")
+
+    if not user_exists(username):
+        print(f"FAILURE: user {username} does not exist")
+        return
+
+    if not authenticate(username, password, ct):
+        print(f"FAILURE: either passwd or token incorrect")
+        return
+    
+    remove_from_passwd(username)
+    remove_from_shadow(username)
+    remove_home_directory(username)
+
+    print(f"SUCCESS: user {username} deleted")
+
 
 def main():
     while True:
