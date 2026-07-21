@@ -28,8 +28,12 @@ to reference the files. Do not hard code client names into the filenames. The
 names must be dynamically created based on which client is running.
 """
 client_name = os.path.basename(os.path.dirname(os.path.abspath(__file__)))
+
 node_certificate = os.path.join("certs", client_name + ".crt")
+
 node_key = os.path.join("certs", client_name + ".key")
+
+checked_out_doc = set()
 
 """ <!!! DO NOT MODIFY THIS FUNCTION !!!>"""
 def post_request(server_name, action, body, node_certificate, node_key):
@@ -65,7 +69,7 @@ def sign_statement(statement, user_private_key_file):
     # TODO: Implement sign statement functionality
     try:
         with open(user_private_key_file, "rb") as key_file:
-            private_key = serialization.load_pem_private_key(key_file.read(), password=None)
+            private_key = serialization.load_pem_private_key(key_file.read(), password = None)
         
         if not isinstance(private_key, rsa.RSAPrivateKey):
             raise TypeError("User private key is not an RSA private key.")
@@ -127,11 +131,18 @@ def login():
         }
        
         try:    
-            server_response = post_request(server_name, "login", body, node_certificate, node_key)
+            server_response = post_request(
+                server_name, 
+                "login", 
+                body, 
+                node_certificate, 
+                node_key
+            )
         
         except requests.RequestException as error:
             print(f"Unable to connect to server: {error}")
             continue
+        
         except ValueError:
             print("Server returned invalid response.")
             continue
@@ -155,16 +166,23 @@ def checkin(session_token):
     """
     
     successful_login = False
-    doc_id = client_name
+    doc_id = input("Document ID/Filename: ").strip()
     client_dir = os.path.dirname(os.path.abspath(__file__))
     checkin_dir = os.path.join(client_dir, "documents", "checkin", doc_id)
-    
+     
+    checkout_dir = os.path.join("documents","checkout",doc_id)
+
     while not successful_login:
 
         if not doc_id:
             print("Document ID cannot be empty.")
             return None
-        
+       
+        # prevent other paths being written to where we want it
+        if os.path.basename(doc_id) != doc_id:
+            print("Document ID must only contain a file name.")
+            return None
+   
         # accept security flag
         print("Security flag: ")
         print("1) Confidentiality")
@@ -174,15 +192,21 @@ def checkin(session_token):
         if sec_flag not in {"1", "2"}:
             print("Security flag not set correctly, please pick option 1 - Confidentiality or 2 - Integrity")
             return None
-
-        # prevent other paths being written to 
-        if os.path.basename(doc_id) != doc_id:
-            print("Document ID must only contain a file name.")
-            return None
         
+        # checked out doc needs to be moved back into checkin before upload
+        if (doc_id in checked_out_doc and os.path.isfile(checkout_dir)):
+            os.makedirs(os.path.dirname(checkin_dir), exist_ok = True)
+
+            try:
+                os.replace(checkout_dir, checkin_dir)
+            
+            except OSError as e:
+                print(f"Unable to move document into check in folder: {e}")
+                return None
+
         # validate that file exists
         if not os.path.isfile(checkin_dir):
-            print(f"Document {doc_id} does not exist.")
+            print(f"Document {doc_id} does not exist in {checkin_dir}")
             return None 
         
         # read document 
@@ -194,34 +218,128 @@ def checkin(session_token):
             return None
 
         # encode for transport
-        encode_doc = base64.b64encode(doc_bytes).decode("utf-8")
+        encoded_doc = base64.b64encode(doc_bytes).decode("utf-8")
         
         body = {
             "session-token": session_token,
             "document-id": doc_id,
             "security-flag": sec_flag,
-            "document": encode_doc 
+            "document": encoded_doc 
         }
 
-        server_response = post_request(server_name, "checkin", body, node_certificate, node_key)
+
+        try:    
+            server_response = post_request(
+                server_name, 
+                "checkin", 
+                body, 
+                node_certificate, 
+                node_key
+            )
+        
+        except requests.RequestException as error:
+            print(f"Unable to connect to server: {error}")
+            continue
+        
+        except ValueError:
+            print("Server returned invalid response.")
+            continue
 
         if server_response.json().get("status") == 200:
-            print(server_response.json().get("message", "Document checked in successfully."))
-        else: 
-            print(server_response.json().get("message", "Document checkin failed."))
-
-        return server_response.json()
-
+            successful_login = True
+            checked_out_doc.discard(doc_id)
+            print(server_response.json().get("message"))
+            return server_response.json()
+        
+        print(server_response.json().get(
+            "message", 
+            "Document check in failed."
+            ))
 
 def checkout(session_token):
     """
         # TODO:
         Send request to server with required parameters (action = "checkout") using post_request()
+
     """
     successful_login = False
-    
-    return
+    checkout_dir = os.path.join("documents", "checkout")
+    doc_id = input("Document ID/Filename: ").strip()
 
+
+    while not successful_login:
+        if not doc_id:
+            print("Document ID can't be empty.")
+            return None
+
+        # prevent other paths from being written into it 
+        if os.path.basename(doc_id) != doc_id:
+            print("Document ID must contain only a filename.")
+            return None
+
+        body = {
+            "token": session_token,
+            "document-id": doc_id 
+        }
+        
+        try:
+            server_response = post_request(
+            server_name,
+            "checkout",
+            body,
+            node_certificate,
+            node_key
+        )
+
+        except requests.RequestException as error:
+            print(f"Unable to connect to server: {error}")
+            continue
+
+        except ValueError:
+            print("Server returned invalid response.")
+            continue
+
+        if server_response.json().get("status") == 200:
+            successful_login = True
+            print(server_response.json().get("message"))
+            return server_response.json()
+
+        print(server_response.json().get(
+            "message",
+            "Document check out failed."
+        ))
+
+        encoded_doc = server_response.json().get("file")
+
+        if not encoded_doc:
+            print("The server did not return a document.")
+            return None 
+
+        try:
+            doc_bytes = base64.b64decode(
+                encoded_doc,
+                validate = True 
+            )
+    
+        except (ValueError, TypeError):
+            print("The server returned invalid document data.")
+            return None
+
+        os.makedirs(checkout_dir, exist_ok = True)
+
+        checkout_path = os.path.join(checkout_dir,doc_id)
+
+        try:
+            with open(checkout_path, "wb") as doc_file:
+                doc_file.write(doc_bytes)
+
+        except OSError as e:
+            print(f"Unable to save checked out document: {e}")
+            return None
+
+        checked_out_doc.add(doc_id)
+
+        print(server_response.json().get("message", "Document Successfully checked out"))
 
 def grant(session_token):
     """
@@ -232,8 +350,73 @@ def grant(session_token):
          - time duration (in seconds) for which access is granted
         Send request to server with required parameters (action = "grant") using post_request()
     """
+    
+    doc_id = input("Document ID: ").strip()
 
-    return
+    if not doc_id:
+        print("Document ID can't be empty.")
+        return None
+
+    if os.path.basename(doc_id) != doc_id:
+        print("Document ID must contain only a filename.")
+        return None
+
+    target_user = input("Target user ID (0 for all users): ").strip()
+
+    if not target_user:
+        print("Target user can't be empty.")
+        return None
+
+    # prevent values that could later be used as paths
+    if target_user != "0":
+        if os.path.basename(target_user) != target_user:
+            print("Invalid target user.")
+            return None
+
+    print("Access: ")
+    print("1) Check in")
+    print("2) Check out")
+    print("3) Both")
+
+    access_right = input("Selection: ").strip()
+
+    if access_right not in {"1", "2", "3"}:
+        print("Access rights must be either 1, 2 or 3.")
+        return None
+
+    duration_input = input("Grant duration in seconds: ").strip()
+
+    try:
+        duration = int(duration_input)
+
+        if duration <= 0:
+            raise ValueError
+
+    except ValueError:
+        print("Duration must be a positive integer.")
+
+    body = {
+        "token": session_token,
+        "document-id": doc_id,
+        "target-user": target_user,
+        "access-right": int(access_right),
+        "duration": duration
+    }
+
+    try:
+        server_response = post_request(server_name, "grant", body, node_certificate, node_key)
+
+    except requests.RequestException as e:
+        print(f"Unable to connect to server: {e}")
+        return None
+
+    except ValueError:
+        print("Server returned an invalid response.")
+        return None
+
+    print(server_response.json().get("message", "Grant request failed."))
+
+    return server_response.json()
 
 
 def delete(session_token):
