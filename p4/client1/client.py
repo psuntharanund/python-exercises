@@ -35,6 +35,56 @@ node_key = os.path.join("certs", client_name + ".key")
 
 checked_out_doc = set()
 
+def checkin_file_logout(session_token, doc_id, file_path):
+    # uploads one document during logout with integrity protection. returns true when server confirms check in is successful 
+
+    if (not doc_id or os.path.basename(doc_id) != doc_id or os.path.isabs(doc_id)):
+        print(f"Unsafe document ID: {doc_id}")
+        return False
+
+    # don't follow symlink during logout, a malicious symlink could cause unintended local file to be uploaded
+    try:
+        if os.path.islink(file_path):
+            print(f"Refusing to upload symbolic link: {doc_id}")
+            return False
+
+        if not os.path.isfile(file_path):
+            print(f"Checkout file not found: {doc_id}")
+            return False
+
+        with open(file_path, "rb") as doc_file:
+            doc_bytes = doc_file.read()
+
+    except OSError as e:
+        print(f"Unable to read {doc_id}: {e}")
+        return False
+
+    body = {
+        "token": session_token,
+        "document-id": doc_id,
+        "security-flag": 2,
+        "document": base64.b64encode(doc_bytes).decode("utf8")
+    }
+
+    try:
+        server_response = post_request(server_name, "checkin", body, node_certificate, node_key)
+
+    except requests.RequestException as e:
+        print(f"Unable to check in {doc_id}: {e}")
+        return False
+
+    except ValueError:
+        print(f"Server returned invalid response while checking in {doc_id}")
+        return False
+
+    if server_response.json().get("status") != 200:
+        print(server_response.json().get("message", f"Unable to check in {doc_id}."))
+        return False
+
+    print(server_response.json().get("message", f"{doc_id} successfully checked in."))
+
+    return True
+
 """ <!!! DO NOT MODIFY THIS FUNCTION !!!>"""
 def post_request(server_name, action, body, node_certificate, node_key):
     """
@@ -425,8 +475,53 @@ def delete(session_token):
         Send request to server with required parameters (action = "delete")
         using post_request().
     """
+    
+    doc_id = input("Document ID: ").strip()
 
-    return
+    if not doc_id:
+        print("Document ID can't be empty.")
+        return None
+
+    # prevent values that could later be used as paths
+    if (os.path.basename(doc_id) != doc_id or os.path.isabs(doc_id)):
+        print("Document ID must contain only a filename.")
+
+    confirmation = input(f"Delete '{doc_id}' permanently? (y/n)")
+
+    if confirmation != "y" or confirmation != "Y":
+            print("Delete cancelled.")
+
+    body = {
+        "token": session_token,
+        "document-id": doc_id
+    }
+
+    try:
+        server_response = post_request(server_name, "delete", body, node_certificate, node_key)
+
+    except requests.RequestException as e:
+        print(f"Unable to connect to server: {e}")
+        return None
+
+    except ValueError:
+        print("Server returned an invalid response.")
+        return None
+
+    print(server_response.json().get("message", "Document deletion failed."))
+
+    if server_response.json().get("status") == 200:
+        checked_out_doc.discard(doc_id)
+
+        checkout_path = os.path.join("documents", "checkout", doc_id)
+        
+        if os.path.isfile(checkout_path):
+            try:
+                os.remove(checkout_path)
+
+            except OSError as e:
+                print("Server copy was deleted, but local copy could not be removed: {e}")
+    
+    return server_response.json()
 
 
 def logout(session_token):
@@ -436,8 +531,93 @@ def logout(session_token):
         The request body should contain the user-id, session-token
     """
 
-    return
+    if not session_token:
+        print("No active session.")
+        return False
 
+    checkout_dir = os.path.join("documents", "checkout")
+    checkin_dir = os.path.join("documents", "checkin")
+
+    os.makedirs(checkout_dir, exist_ok = True)
+    os.makedirs(checkin_dir, exist_ok = True)
+
+    try:
+        checkout_entries = os.listdir(checkout_dir)
+
+    except OSError as e:
+        print(f"Unable to inspect checkout folder: {e}")
+        return False
+
+    checkout_files = []
+
+    for doc_id in checkout_entries:
+        checkout_path = os.path.join(checkout_dir, doc_id)
+
+        # refuse symbolic links
+        if os.path.islink(checkout_path):
+            print(f"Logout stopped: symbolic link found at {doc_id}")
+            return False
+
+        if os.path.isfile(checkout_path):
+            checkout_files.append(doc_id)
+
+    # process files
+    checkout_files.sort()
+
+    for doc_id in checkout_files:
+        checkout_path = os.path.join(checkout_dir, doc_id)
+        checkin_path = os.path.join(checkin_dir, doc_id)
+
+        if os.path.exists(checkin_path):
+            print(f"Logout stopped: {doc_id} already exists in checkin folder.")
+            return False
+        
+        try:
+            #doing a replace here ensures that an unrelated checkin file is not silently overwritten 
+            #since we are rejecting an existing destination in the above
+            os.replace(checkout_path, checkin_path)
+        
+        except OSError as e:
+            print(f"Unable to move {doc_id} into checkin folder: {e}")
+            return False
+
+        upload_success = checkin_file_logout(session_token, doc_id, checkin_path)
+
+        if not upload_success:
+            try:
+                if (os.path.isfile(checkin_path) and not os.path.exists(checkout_path)):
+                    os.replace(checkin_path, checkout_path)
+            
+            except OSError as rollback_e:
+                print(f"Warning: unable to restore {doc_id} to checkout: {rollback_e}")
+
+            print("Logout was not completed because one or more documents could not be checked in.")
+            return False
+        
+        checked_out_doc.discard(doc_id)
+
+    body = {
+        "token": session_token 
+    }
+    
+    try:
+        server_response = post_request(server_name, "logout", body, node_certificate, node_key)
+
+    except requests.RequestException as e:
+        print(f"Unable to terminate server session: {e}")
+        return False
+
+    except ValueError:
+        print("Server returned an invalid logout response.")
+        return False
+
+    if server_response.json().get("status") != 200:
+        print(server_response.json().get("message", "Logout failed."))
+        return False
+
+    print(server_response.json().get("message", "Logout successful."))
+
+    return True 
 
 def print_main_menu():
     """

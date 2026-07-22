@@ -97,7 +97,7 @@ def protect_integrity_document(doc_bytes):
     return signature
 
 def verify_integrity_document(doc_bytes, signature):
-
+    # if option 2 is selected for security flag, this helps check the document
     public_key = load_server_public_key()
 
     if not isinstance(public_key, rsa.RSAPublicKey):
@@ -159,6 +159,7 @@ def user_verify_checkout(metadata, user_id):
     return False
 
 def decrypt_confidential_document(encrypted_doc, encrypted_aes_key, nonce):
+    # when security flag is 1, this will decrypt the document when it's requested
     private_key = load_server_private_key()
 
     if not isinstance(private_key, rsa.RSAPrivateKey):
@@ -222,6 +223,41 @@ def user_has_access(metadata, user_id, requested_access):
         return access_right in {2, 3}
 
     return False
+
+def remove_present_file(file_path):
+    # delete file if it exists
+    
+    if not os.path.exists(file_path):
+        return True
+
+    try:
+        os.remove(file_path)
+        return True
+
+    except OSError as e:
+        print(f"Unable to delete {file_path}: {e}")
+        return False
+    
+def destroy_key(key_path):
+    # when overwriting the file, we need to get rid of the old key to put the new one int
+    
+    if not os.path.isfile(key_path):
+        return True
+
+    try:
+        key_size = os.path.getsize(key_path)
+
+        with open(key_path, "r+b") as key_file:
+                key_file.write(os.urandom(key_size))
+                key_file.flush()
+                os.fsync(key_file.fileno())
+
+        os.remove(key_path)
+        return True
+
+    except OSError as e:
+        print(f"Unable to destroy encryption key: {e}")
+        return False
 
 class welcome(Resource):
     def get(self):
@@ -771,23 +807,102 @@ class delete(Resource):
         4) 700 - Other failures
     """
     def post(self):
-        data = request.get_json()
-        token = data['token']
-        success = False
-        if success:
-            # Similar response format given below can be
-            # used for all the other functions
-            response = {
-                'status': 200,
-                'message': 'Successfully deleted the file',
-            }
-        else:
-            response = {
-                'status': 702,
-                'message': 'Access denied deleting file',
-            }
-        return jsonify(response)
+        data = request.get_json(silent = True)
 
+        if not data:
+            return jsonify({
+                "status": 700,
+                "message": "Document deletion failed."
+            })
+
+        token = data.get("token")
+        doc_id = data.get("document-id")
+        user_id = active_sessions.get(token)
+
+        if not user_id:
+            return jsonify({
+                "status": 702,
+                "message": "Access denied deleting document."
+            })
+
+        if not doc_id:
+            return jsonify({
+                "status": 700,
+                "message": "Document deletion failed."
+            })
+
+        if (os.path.basename(doc_id) != doc_id or os.path.isabs(doc_id)):
+            return jsonify({
+                "status": 700,
+                "message": "Invalid document ID."
+            })
+
+        doc_path = os.path.join("documents", doc_id)
+
+        metadata_path = doc_path + ".meta"
+
+        if not os.path.isfile(metadata_path):
+            return jsonify({
+                "status": 704,
+                "message": "Document not found."
+            })
+
+        try:
+            with open(metadata_path, "r", encoding = "utf-8") as metadata_file:
+                metadata = json.load(metadata_file)
+
+        except (OSError, ValueError) as e:
+            print(f"Unable to read deletion metadata: {e}")
+
+            return jsonify({
+                "status": 700,
+                "message": "Document deletion failed."
+            })
+
+        # only original doc owner may delete the file
+        if metadata.get("owner") != user_id:
+            return jsonify({
+                "status": 702,
+                "message": "Access denied deleting document."
+            })
+
+        sec_flag = metadata.get("security-flag")
+        encrypted_key_path = doc_path + ".key"
+        nonce_path = doc_path + ".nonce"
+        signature_path = doc_path + ".sig"
+
+        # confidential files need to lose AES key first
+        if sec_flag in {1, "1"}:
+            if not destroy_key(encrypted_key_path):
+                return jsonify({
+                    "status": 700,
+                    "message": "Document deletion failed because encryption key could not be destroyed."
+                })
+
+        deletion_targets = [doc_path, nonce_path, signature_path]
+
+        # if key was already destroyed
+        if sec_flag in {1, "1"}:
+            deletion_targets.append(encrypted_key_path)
+
+        for file_path in deletion_targets:
+            if not remove_present_file(file_path):
+                return jsonify({
+                    "status": 700,
+                    "message": "Document deletion failed."
+                })
+
+        # delete metadata
+        if not remove_present_file(metadata_path):
+            return jsonify({
+                "status": 700,
+                "message": "Document data was removed, but metadata deletion failed."
+            })
+
+        return jsonify({
+            "status": 200,
+            "message": "Document Successfully deleted"
+        })
 
 class logout(Resource):
     # TODO: Implement logout functionality
@@ -798,25 +913,36 @@ class logout(Resource):
             2) 700 - Failed to log out
         """
 
-        def post(self):
-            data = request.get_json()
-            token = data['token']
-        success = False
-        if success:
-            # Similar response format given below can be
-            # used for all the other functions
-            response = {
-                'status': 200,
-                'message': 'Successfully logged out',
-            }
-        else:
-            response = {
-                'status': 700,
-                'message': 'Failed to log out',
-            }
-        return jsonify(response)
+        data = request.get_json(silent = True)
+
+        if not isinstance(data, dict):
+            return jsonify({
+                "status": 700,
+                "message": "Logout failed."
+            })
 
 
+        token = data.get("token")
+
+        if not isinstance(token, str) or not token:
+            return jsonify({
+                "status": 702,
+                "message": "Invalid or expired session."
+            })
+        
+        # pop to check and remove token, future requests using this token are rejected
+        removed_user = active_sessions.pop(token, None)
+
+        if removed_user is None:
+            return jsonify({
+                "status": 702,
+                "message": "Invalid or expired session."
+            })
+
+        return jsonify({
+            "status": 200,
+            "message": "Logout successful."
+        })
 
 api.add_resource(welcome, '/')
 api.add_resource(login, '/login')
