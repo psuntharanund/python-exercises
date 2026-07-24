@@ -144,65 +144,62 @@ def login():
         The request body should contain the user-id, statement and signed statement.
     """
 
-    successful_login = False
-
-    while not successful_login:
-        # get the user id from the user input or default to user1
-        user_id = (input(" User Id: ") or "user1")
+    # get the user id from the user input or default to user1
+    user_id = input(" User Id: ").strip() or "user1"
 
 
-        # get the user private key filename or default to user1.key
-        private_key_filename = (input(" Private Key Filename: ".strip() or user_id + ".key"))
-        
-        if os.path.basename(private_key_filename) != private_key_filename:
-            print("Private key must be in userkeys folder.")
-            continue
+    # get the user private key filename or default to user1.key
+    private_key_filename = (input(" Private Key Filename: ").strip() 
+                                  or user_id + ".key")
+    
+    if os.path.basename(private_key_filename) != private_key_filename:
+        print("Private key must be in userkeys folder.")
+        return None
 
-        # complete the relative path of the user private key filename (depends on the client)
-        # Ex: "./userkeys/" + private_key_filename
-        user_private_key_file = os.path.join("userkeys", private_key_filename)
+    # complete the relative path of the user private key filename (depends on the client)
+    # Ex: "./userkeys/" + private_key_filename
+    user_private_key_file = os.path.join("userkeys", private_key_filename)
 
-        # check for if private key is not found, otherwise it will crash
-        if not os.path.isfile(user_private_key_file):
-            print("Private key file not found.")
-            continue
+    # check for if private key is not found, otherwise it will crash
+    if not os.path.isfile(user_private_key_file):
+        print("Private key file not found.")
+        return None
 
-        # create the statement
-        statement = f"{client_name} as {user_id} logs into the Server"
-        signed_statement = sign_statement(statement, user_private_key_file)
+    # create the statement
+    statement = f"{client_name} as {user_id} logs into the Server"
+    signed_statement = sign_statement(statement, user_private_key_file)
 
-        if signed_statement is None:
-            continue
+    if signed_statement is None:
+        return None
 
-        body = {
-            "user-id": user_id,
-            "statement": statement,
-            "signed-statement": base64.b64encode(signed_statement).decode("utf8")
-        }
-       
-        try:    
-            server_response = post_request(
-                server_name, 
-                "login", 
-                body, 
-                node_certificate, 
-                node_key
-            )
-        
-        except requests.RequestException as error:
-            print(f"Unable to connect to server: {error}")
-            continue
-        
-        except ValueError:
-            print("Server returned invalid response.")
-            continue
+    body = {
+        "user-id": user_id,
+        "statement": statement,
+        "signed-statement": base64.b64encode(signed_statement).decode("utf8")
+    }
+   
+    try:    
+        server_response = post_request(
+            server_name, 
+            "login", 
+            body, 
+            node_certificate, 
+            node_key
+        )
+    
+    except requests.RequestException as error:
+        print(f"Unable to connect to server: {error}")
+        return None
+    
+    except ValueError:
+        print("Server returned invalid response.")
+        return None
 
-        if server_response.json().get("status") == 200:
-            successful_login = True
-            print(server_response.json().get("message"))
-            return server_response.json()
-        
-        print(server_response.json().get("message", "Login failed."))
+    if server_response.json().get("status") == 200:
+        print(server_response.json().get("message"))
+        return server_response.json()
+    
+    print(server_response.json().get("message", "Login failed."))
 
 
 
@@ -271,9 +268,9 @@ def checkin(session_token):
         encoded_doc = base64.b64encode(doc_bytes).decode("utf-8")
         
         body = {
-            "session-token": session_token,
+            "token": session_token,
             "document-id": doc_id,
-            "security-flag": sec_flag,
+            "security-flag": int(sec_flag),
             "document": encoded_doc 
         }
 
@@ -349,47 +346,41 @@ def checkout(session_token):
             print("Server returned invalid response.")
             continue
 
-        if server_response.json().get("status") == 200:
-            successful_login = True
-            print(server_response.json().get("message"))
+        if server_response.json().get("status") != 200:
+            print(server_response.json().get("message", "Document check out failed."))
             return server_response.json()
-
-        print(server_response.json().get(
-            "message",
-            "Document check out failed."
-        ))
 
         encoded_doc = server_response.json().get("file")
 
         if not encoded_doc:
             print("The server did not return a document.")
-            return None 
+            return None
 
         try:
-            doc_bytes = base64.b64decode(
-                encoded_doc,
-                validate = True 
-            )
-    
+            doc_bytes = base64.b64decode(encoded_doc, validate = True)
+
         except (ValueError, TypeError):
             print("The server returned invalid document data.")
             return None
 
         os.makedirs(checkout_dir, exist_ok = True)
 
-        checkout_path = os.path.join(checkout_dir,doc_id)
-
+        checkout_path = os.path.join(checkout_dir, doc_id)
+        
         try:
-            with open(checkout_path, "wb") as doc_file:
-                doc_file.write(doc_bytes)
+            with open(checkout_path, "wb") as file:
+                file.write(doc_bytes)
 
         except OSError as e:
-            print(f"Unable to save checked out document: {e}")
+            print(f"Unable to save checked out documnent: {e}")
             return None
 
         checked_out_doc.add(doc_id)
 
-        print(server_response.json().get("message", "Document Successfully checked out"))
+        print(server_response.json().get("message", "Document Successfully checked out."))
+
+        return server_response.json()
+
 
 def grant(session_token):
     """
@@ -444,6 +435,7 @@ def grant(session_token):
 
     except ValueError:
         print("Duration must be a positive integer.")
+        return None
 
     body = {
         "token": session_token,
@@ -485,11 +477,7 @@ def delete(session_token):
     # prevent values that could later be used as paths
     if (os.path.basename(doc_id) != doc_id or os.path.isabs(doc_id)):
         print("Document ID must contain only a filename.")
-
-    confirmation = input(f"Delete '{doc_id}' permanently? (y/n)")
-
-    if confirmation != "y" or confirmation != "Y":
-            print("Delete cancelled.")
+        return None
 
     body = {
         "token": session_token,
@@ -536,10 +524,8 @@ def logout(session_token):
         return False
 
     checkout_dir = os.path.join("documents", "checkout")
-    checkin_dir = os.path.join("documents", "checkin")
 
     os.makedirs(checkout_dir, exist_ok = True)
-    os.makedirs(checkin_dir, exist_ok = True)
 
     try:
         checkout_entries = os.listdir(checkout_dir)
@@ -548,52 +534,38 @@ def logout(session_token):
         print(f"Unable to inspect checkout folder: {e}")
         return False
 
-    checkout_files = []
 
     for doc_id in checkout_entries:
         checkout_path = os.path.join(checkout_dir, doc_id)
+        
+        if (not doc_id 
+                or os.path.basename(doc_id) != doc_id 
+                or os.path.isabs(doc_id)):
+            print(f"Logout stopped due to unsafe document ID: {doc_id}"
+                  )
+            return False
 
         # refuse symbolic links
         if os.path.islink(checkout_path):
             print(f"Logout stopped: symbolic link found at {doc_id}")
             return False
 
-        if os.path.isfile(checkout_path):
-            checkout_files.append(doc_id)
+        if not os.path.isfile(checkout_path):
+            continue
 
-    # process files
-    checkout_files.sort()
+        # process files
 
-    for doc_id in checkout_files:
-        checkout_path = os.path.join(checkout_dir, doc_id)
-        checkin_path = os.path.join(checkin_dir, doc_id)
-
-        if os.path.exists(checkin_path):
-            print(f"Logout stopped: {doc_id} already exists in checkin folder.")
-            return False
-        
-        try:
-            #doing a replace here ensures that an unrelated checkin file is not silently overwritten 
-            #since we are rejecting an existing destination in the above
-            os.replace(checkout_path, checkin_path)
-        
-        except OSError as e:
-            print(f"Unable to move {doc_id} into checkin folder: {e}")
-            return False
-
-        upload_success = checkin_file_logout(session_token, doc_id, checkin_path)
+        upload_success = checkin_file_logout(session_token, doc_id, checkout_path)
 
         if not upload_success:
-            try:
-                if (os.path.isfile(checkin_path) and not os.path.exists(checkout_path)):
-                    os.replace(checkin_path, checkout_path)
-            
-            except OSError as rollback_e:
-                print(f"Warning: unable to restore {doc_id} to checkout: {rollback_e}")
+            print("Logout was not completed because a document could not be checked in.")
 
-            print("Logout was not completed because one or more documents could not be checked in.")
-            return False
-        
+        try:
+            os.remove(checkout_path)
+
+        except OSError as e:
+            print(f"Unable to remove {doc_id} to checkout: {e}")
+ 
         checked_out_doc.discard(doc_id)
 
     body = {
@@ -658,6 +630,8 @@ def main():
     # test()
     # return
     login_return = login()
+    if not login_return:
+        return
 
     server_message = login_return["message"]
     server_status = login_return["status"]
@@ -683,7 +657,10 @@ def main():
         elif user_choice == "4":
             delete(session_token)
         elif user_choice == "5":
-            logout(session_token)
+            if logout(session_token):
+                session_token = None
+                is_login = False
+
         else:
             print("not a valid choice")
 

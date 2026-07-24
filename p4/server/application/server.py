@@ -7,15 +7,12 @@ When referencing files or directories, always use relative paths - do NOT hard
 code absolute paths.
 '''
 
-from re import PatternError
-from typing import Type
-from cryptography.hazmat.primitives.serialization.ssh import ssh_key_fingerprint
 from flask import Flask, request, jsonify
-from flask_restful import Resource, api
+from flask_restful import Resource, Api
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
-from cryptography.hazmat.primitives.ciphers.head import AESGCM
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 ''' 
 TODO: import additional modules as required from requirements.txt or the 
@@ -47,7 +44,7 @@ def load_server_private_key():
 server_public_key_file = os.path.join(
     "..",
     "certs",
-    "secure_shared_store.pub"
+    "secure-shared-store.pub"
 )
 
 def load_server_public_key():
@@ -189,38 +186,28 @@ def user_has_access(metadata, user_id, requested_access):
 
     grant_rule = metadata.get("grant")
 
-    if not grant_rule:
+    if not isinstance(grant_rule, dict):
         return False
-
-    expiration_time = grant_rule.get("expires-at")
 
     try:
-        expiration_time = float(expiration_time)
+        target_user = str(grant_rule.get("target-user"))
+        expiration_time = float(grant_rule.get("expires-at"))
+        access_right = int(grant_rule.get("access-right"))
 
-    except (ValueError, TypeError):
-        return False
+    except (TypeError, ValueError):
+        return False 
 
     if time.time() >= expiration_time:
         return False
-
-    target_user = str(grant_rule.get("target-user"))
-
-    if target_user not in {"0", user_id}:
-        return False
-
-    access_right = grant_rule.get("access-right")
-
-    try:
-        access_right = int(access_right)
-
-    except (ValueError, TypeError):
+    
+    if target_user not in {"0", str(user_id)}:
         return False
 
     if requested_access == 1:
-        return access_right in {1, 3}
+        return access_right in {1,3}
 
     if requested_access == 2:
-        return access_right in {2, 3}
+        return access_right in {2,3}
 
     return False
 
@@ -286,7 +273,7 @@ def verify_statement(statement, signed_statement, user_public_key_file):
 
 class login(Resource):
     def post(self):
-        data = request.get_json()
+        data = request.get_json(silent = True)
         
         if not data:
             return jsonify({
@@ -395,7 +382,7 @@ class checkin(Resource):
     """
 
     def post(self):
-        data = request.get_json(silent=True)
+        data = request.get_json(silent = True)
         
         if not data:
             return jsonify({
@@ -469,7 +456,7 @@ class checkin(Resource):
                 (encrypted_doc, encrypted_aes_key, nonce) = protect_confidential_document(doc_bytes)
 
                 save_binary_file(doc_id + ".key", encrypted_aes_key )
-
+                save_binary_file(doc_id, encrypted_doc)
                 save_binary_file(doc_id + ".nonce", nonce)
                 
                 # remove old signature if flag is 2
@@ -500,7 +487,10 @@ class checkin(Resource):
             if existing_metadata is not None:
                 owner = existing_metadata.get("owner", user_id)
 
-                existing_grant = existing_metadata.get("grant")
+                stored_grant = existing_metadata.get("grant")
+
+                if isinstance(stored_grant, dict):
+                    existing_grant = stored_grant
 
             metadata = {
                 "document-id": doc_id,
@@ -598,7 +588,7 @@ class checkout(Resource):
             with open(metadata_path, "r", encoding = "utf-8") as metadata_file:
                 metadata = json.load(metadata_file)
 
-        except (OSError, ValueError):
+        except (OSError, ValueError, TypeError):
             return jsonify({
                 "status": 700,
                 "message": "Document checkout failed.",
@@ -671,6 +661,12 @@ class checkout(Resource):
 
         except (OSError, ValueError, TypeError) as e:
             print(f"Checkout error: {e}")
+
+            return jsonify({
+                "status": 700,
+                "message": "Document checkout failed.",
+                "file": "Invalid"
+            })
 
         encoded_doc = base64.b64encode(doc_bytes).decode("utf-8")
 
@@ -775,11 +771,12 @@ class grant(Resource):
 
         expiration_time = time.time() + duration
 
-        # replace previous good grant for current doc
+        metadata.pop("grants", None)
+
         metadata["grant"] = {
-            "target-user": target_user,
-            "access-right": access_right,
-            "expires-at": expiration_time 
+            "target-user": str(target_user),
+            "access-right": int(access_right),
+            "expires-at": expiration_time
         }
 
         try:
@@ -926,8 +923,8 @@ class logout(Resource):
 
         if not isinstance(token, str) or not token:
             return jsonify({
-                "status": 702,
-                "message": "Invalid or expired session."
+                "status": 700,
+                "message": "Logout failed."
             })
         
         # pop to check and remove token, future requests using this token are rejected
@@ -935,9 +932,12 @@ class logout(Resource):
 
         if removed_user is None:
             return jsonify({
-                "status": 702,
-                "message": "Invalid or expired session."
+                "status": 700,
+                "message": "Logout failed."
             })
+        
+        if user_sessions.get(removed_user) == token:
+            user_sessions.pop(removed_user, None)
 
         return jsonify({
             "status": 200,
