@@ -143,14 +143,18 @@ def login():
         post_request function given.
         The request body should contain the user-id, statement and signed statement.
     """
+    try:
+        os.remove(logfile)
+    
+    except FileNotFoundError:
+        pass
 
     # get the user id from the user input or default to user1
     user_id = input(" User Id: ").strip() or "user1"
 
 
     # get the user private key filename or default to user1.key
-    private_key_filename = (input(" Private Key Filename: ").strip() 
-                                  or user_id + ".key")
+    private_key_filename = (input(" Private Key Filename: ").strip() or user_id + ".key")
     
     if os.path.basename(private_key_filename) != private_key_filename:
         print("Private key must be in userkeys folder.")
@@ -200,8 +204,7 @@ def login():
         return server_response.json()
     
     print(server_response.json().get("message", "Login failed."))
-
-
+    return None
 
 def checkin(session_token):
     """
@@ -212,96 +215,92 @@ def checkin(session_token):
         The request body should contain the required parameters to ensure the file is sent to the server.
     """
     
-    successful_login = False
     doc_id = input("Document ID/Filename: ").strip()
     client_dir = os.path.dirname(os.path.abspath(__file__))
     checkin_dir = os.path.join(client_dir, "documents", "checkin", doc_id)
      
     checkout_dir = os.path.join("documents","checkout",doc_id)
 
-    while not successful_login:
-
-        if not doc_id:
-            print("Document ID cannot be empty.")
-            return None
-       
-        # prevent other paths being written to where we want it
-        if os.path.basename(doc_id) != doc_id:
-            print("Document ID must only contain a file name.")
-            return None
+    if not doc_id:
+        print("Document ID cannot be empty.")
+        return None
    
-        # accept security flag
-        print("Security flag: ")
-        print("1) Confidentiality")
-        print("2) Integrity")
-        sec_flag = input()
+    # prevent other paths being written to where we want it
+    if os.path.basename(doc_id) != doc_id:
+        print("Document ID must only contain a file name.")
+        return None
 
-        if sec_flag not in {"1", "2"}:
-            print("Security flag not set correctly, please pick option 1 - Confidentiality or 2 - Integrity")
-            return None
-        
-        # checked out doc needs to be moved back into checkin before upload
-        if (doc_id in checked_out_doc and os.path.isfile(checkout_dir)):
-            os.makedirs(os.path.dirname(checkin_dir), exist_ok = True)
+    # accept security flag
+    print("Security flag: ")
+    print("1) Confidentiality")
+    print("2) Integrity")
+    sec_flag = input()
 
-            try:
-                os.replace(checkout_dir, checkin_dir)
-            
-            except OSError as e:
-                print(f"Unable to move document into check in folder: {e}")
-                return None
+    if sec_flag not in {"1", "2"}:
+        print("Security flag not set correctly, please pick option 1 - Confidentiality or 2 - Integrity")
+        return None
+    
+    # checked out doc needs to be moved back into checkin before upload
+    if (doc_id in checked_out_doc and os.path.isfile(checkout_dir)):
+        os.makedirs(os.path.dirname(checkin_dir), exist_ok = True)
 
-        # validate that file exists
-        if not os.path.isfile(checkin_dir):
-            print(f"Document {doc_id} does not exist in {checkin_dir}")
-            return None 
-        
-        # read document 
         try:
-            with open(checkin_dir, "rb") as file:
-                doc_bytes = file.read()
+            os.replace(checkout_dir, checkin_dir)
+        
         except OSError as e:
-            print(f"Error reading document: {e}")
+            print(f"Unable to move document into check in folder: {e}")
             return None
 
-        # encode for transport
-        encoded_doc = base64.b64encode(doc_bytes).decode("utf-8")
-        
-        body = {
-            "token": session_token,
-            "document-id": doc_id,
-            "security-flag": int(sec_flag),
-            "document": encoded_doc 
-        }
+    # validate that file exists
+    if not os.path.isfile(checkin_dir):
+        print(f"Document {doc_id} does not exist in {checkin_dir}")
+        return None 
+    
+    # read document 
+    try:
+        with open(checkin_dir, "rb") as file:
+            doc_bytes = file.read()
+    except OSError as e:
+        print(f"Error reading document: {e}")
+        return None
+
+    # encode for transport
+    encoded_doc = base64.b64encode(doc_bytes).decode("utf-8")
+    
+    body = {
+        "token": session_token,
+        "document-id": doc_id,
+        "security-flag": int(sec_flag),
+        "document": encoded_doc 
+    }
 
 
-        try:    
-            server_response = post_request(
-                server_name, 
-                "checkin", 
-                body, 
-                node_certificate, 
-                node_key
-            )
-        
-        except requests.RequestException as error:
-            print(f"Unable to connect to server: {error}")
-            continue
-        
-        except ValueError:
-            print("Server returned invalid response.")
-            continue
+    try:    
+        server_response = post_request(
+            server_name, 
+            "checkin", 
+            body, 
+            node_certificate, 
+            node_key
+        )
+    
+    except requests.RequestException as error:
+        print(f"Unable to connect to server: {error}")
+        return None
+    
+    except ValueError:
+        print("Server returned invalid response.")
+        return None
 
-        if server_response.json().get("status") == 200:
-            successful_login = True
-            checked_out_doc.discard(doc_id)
-            print(server_response.json().get("message"))
-            return server_response.json()
-        
-        print(server_response.json().get(
-            "message", 
-            "Document check in failed."
-            ))
+    if server_response.json().get("status") == 200:
+        checked_out_doc.discard(doc_id)
+        print(server_response.json().get("message"))
+        return server_response.json()
+    
+    print(server_response.json().get(
+        "message", 
+        "Document check in failed."
+        ))
 
 def checkout(session_token):
     """
@@ -309,77 +308,74 @@ def checkout(session_token):
         Send request to server with required parameters (action = "checkout") using post_request()
 
     """
-    successful_login = False
     checkout_dir = os.path.join("documents", "checkout")
     doc_id = input("Document ID/Filename: ").strip()
 
+    if not doc_id:
+        print("Document ID can't be empty.")
+        return None
 
-    while not successful_login:
-        if not doc_id:
-            print("Document ID can't be empty.")
-            return None
+    # prevent other paths from being written into it 
+    if os.path.basename(doc_id) != doc_id:
+        print("Document ID must contain only a filename.")
+        return None
 
-        # prevent other paths from being written into it 
-        if os.path.basename(doc_id) != doc_id:
-            print("Document ID must contain only a filename.")
-            return None
+    body = {
+        "token": session_token,
+        "document-id": doc_id 
+    }
+    
+    try:
+        server_response = post_request(
+        server_name,
+        "checkout",
+        body,
+        node_certificate,
+        node_key
+    )
 
-        body = {
-            "token": session_token,
-            "document-id": doc_id 
-        }
-        
-        try:
-            server_response = post_request(
-            server_name,
-            "checkout",
-            body,
-            node_certificate,
-            node_key
-        )
+    except requests.RequestException as error:
+        print(f"Unable to connect to server: {error}")
+        return None
 
-        except requests.RequestException as error:
-            print(f"Unable to connect to server: {error}")
-            continue
+    except ValueError:
+        print("Server returned invalid response.")
+        return None
 
-        except ValueError:
-            print("Server returned invalid response.")
-            continue
-
-        if server_response.json().get("status") != 200:
-            print(server_response.json().get("message", "Document check out failed."))
-            return server_response.json()
-
-        encoded_doc = server_response.json().get("file")
-
-        if not encoded_doc:
-            print("The server did not return a document.")
-            return None
-
-        try:
-            doc_bytes = base64.b64decode(encoded_doc, validate = True)
-
-        except (ValueError, TypeError):
-            print("The server returned invalid document data.")
-            return None
-
-        os.makedirs(checkout_dir, exist_ok = True)
-
-        checkout_path = os.path.join(checkout_dir, doc_id)
-        
-        try:
-            with open(checkout_path, "wb") as file:
-                file.write(doc_bytes)
-
-        except OSError as e:
-            print(f"Unable to save checked out documnent: {e}")
-            return None
-
-        checked_out_doc.add(doc_id)
-
-        print(server_response.json().get("message", "Document Successfully checked out."))
-
+    if server_response.json().get("status") != 200:
+        print(server_response.json().get("message", "Document check out failed."))
         return server_response.json()
+
+    encoded_doc = server_response.json().get("file")
+
+    if not encoded_doc:
+        print("The server did not return a document.")
+        return None
+
+    try:
+        doc_bytes = base64.b64decode(encoded_doc, validate = True)
+
+    except (ValueError, TypeError):
+        print("The server returned invalid document data.")
+        return None
+
+    os.makedirs(checkout_dir, exist_ok = True)
+
+    checkout_path = os.path.join(checkout_dir, doc_id)
+    
+    try:
+        with open(checkout_path, "wb") as file:
+            file.write(doc_bytes)
+
+    except OSError as e:
+        print(f"Unable to save checked out documnent: {e}")
+        return None
+
+    checked_out_doc.add(doc_id)
+
+    print(server_response.json().get("message", "Document Successfully checked out."))
+
+    return server_response.json()
 
 
 def grant(session_token):
@@ -430,7 +426,7 @@ def grant(session_token):
     try:
         duration = int(duration_input)
 
-        if duration <= 0:
+        if duration < 0:
             raise ValueError
 
     except ValueError:
@@ -496,19 +492,7 @@ def delete(session_token):
         return None
 
     print(server_response.json().get("message", "Document deletion failed."))
-
-    if server_response.json().get("status") == 200:
-        checked_out_doc.discard(doc_id)
-
-        checkout_path = os.path.join("documents", "checkout", doc_id)
-        
-        if os.path.isfile(checkout_path):
-            try:
-                os.remove(checkout_path)
-
-            except OSError as e:
-                print("Server copy was deleted, but local copy could not be removed: {e}")
-    
+ 
     return server_response.json()
 
 
@@ -535,7 +519,7 @@ def logout(session_token):
         return False
 
 
-    for doc_id in checkout_entries:
+    for doc_id in list(checked_out_doc):
         checkout_path = os.path.join(checkout_dir, doc_id)
         
         if (not doc_id 

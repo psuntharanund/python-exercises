@@ -164,8 +164,8 @@ def main():
     server = subprocess.Popen(
         ["./start_server.sh"],
         cwd="./server/application",
-        stdout=FNULL,
-        stderr=FNULL,
+        stdout=None,
+        stderr=None,
     )
     time.sleep(3)
     try:

@@ -180,7 +180,7 @@ def decrypt_confidential_document(encrypted_doc, encrypted_aes_key, nonce):
 
 def user_has_access(metadata, user_id, requested_access):
     # verify user has access
-    
+
     if metadata.get("owner") == user_id:
         return True
 
@@ -698,7 +698,7 @@ class grant(Resource):
         target_user = data.get("target-user")
         access_right = data.get("access-right")
         duration = data.get("duration")
-
+        access_right = int(access_right)
         # confirm valid session
         user_request = active_sessions.get(token)
 
@@ -733,7 +733,7 @@ class grant(Resource):
         try:
             duration = int(duration)
 
-            if duration <= 0:
+            if duration < 0:
                 raise ValueError
 
         except (ValueError, TypeError):
